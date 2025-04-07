@@ -1,0 +1,102 @@
+---
+- name: Stop server
+  hosts: all_nodes
+  become: yes
+  become_user: yjren
+  tasks:
+    - name: Force kill any previous running instances
+      command: bash PATH_TO_RUN_SCRIPTS/run/forceStop.sh
+      register: command_result
+      ignore_errors: true
+    - name: Display stdout and stderr of the command
+      debug:
+        msg:
+          - "Command stdout: {{ command_result.stdout }}"
+          - "Command stderr: {{ command_result.stderr }}"
+    - name: Fail the play if the previous command did not succeed
+      fail: msg="the command failed"
+      when: "'FAILED' in command_result.stderr"
+    - name: Wait until server shutdown is done
+      pause:
+        seconds: 3
+
+- name: Start StatsMonitor at server side
+  hosts: sync_src
+  become: yes
+  become_user: yjren
+  gather_facts: false
+  tasks:
+    - name: StatsMonitor
+      shell: |
+        . /etc/profile &&
+        nohup bash PATH_TO_RUN_SCRIPTS/status/runStats.sh runDBEServer.sh {{ LogName }} &
+      vars:
+        LogName: "Running"
+      register: command_result
+      ignore_errors: true
+    - name: Fail the play if the previous command did not succeed
+      fail: msg="the command failed"
+      when: "'FAILED' in command_result.stderr"
+
+- name: Run server
+  hosts: sync_src
+  become: yes
+  become_user: yjren
+  tasks:
+    - name: Execute runDBEServer.sh
+      command: bash PATH_TO_RUN_SCRIPTS/run/runDBEServer.sh {{ LogName }}
+      vars:
+        LogName: "Running DBE Server"
+      register: command_result
+      ignore_errors: true
+    - name: Display stdout and stderr of the command
+      debug:
+        msg:
+          - "Command stdout: {{ command_result.stdout }}"
+          - "Command stderr: {{ command_result.stderr }}"
+    - name: Fail the play if the previous command did not succeed
+      fail: msg="the command failed"
+      when: "'FAILED' in command_result.stderr"
+    - name: Wait until server startup is done
+      pause:
+        seconds: 10
+
+- name: Run client with specified workload
+  hosts: sync_dest
+  become: yes
+  become_user: yjren
+  tasks:
+    - name: Execute runDBEClient.sh
+      command: bash PATH_TO_RUN_SCRIPTS/run/runDBEClient.sh {{ Workloads }} {{ LogName }} 
+      vars:
+        Workloads: "GCC"
+        LogName: "Running DBE Client"
+      register: command_result
+      ignore_errors: true
+    - name: Fail the play if the previous command did not succeed
+      fail: msg="the command failed"
+      when: "'FAILED' in command_result.stderr"
+    - name: Wait until store operation is done
+      pause:
+        seconds: 10
+
+- name: Stop server
+  hosts: sync_src
+  become: yes
+  become_user: yjren
+  tasks:
+    - name: Kill runDBEServer.sh
+      command: bash PATH_TO_RUN_SCRIPTS/run/stopDBEServer.sh
+      register: command_result
+      ignore_errors: true
+    - name: Display stdout and stderr of the command
+      debug:
+        msg:
+          - "Command stdout: {{ command_result.stdout }}"
+          - "Command stderr: {{ command_result.stderr }}"
+    - name: Fail the play if the previous command did not succeed
+      fail: msg="the command failed"
+      when: "'FAILED' in command_result.stderr"
+    - name: Wait until server shutdown is done
+      pause:
+        seconds: 10

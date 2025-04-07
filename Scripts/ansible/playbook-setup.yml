@@ -1,0 +1,24 @@
+---
+- name: Setup code
+  hosts: all_nodes
+  become: yes
+  become_user: yjren
+  tasks:
+    - name: Setup code on all nodes
+      command: bash PATH_TO_RUN_SCRIPTS/run/setup.sh {{ system }} {{ cache }}
+      vars:
+        system: "SYSTEM_NAME"
+        cache: "CACHE_SIZE"
+      register: command_result
+      ignore_errors: true
+    - name: Display stdout and stderr of the command
+      debug:
+        msg: >
+          - "Command stdout: {{ command_result.stdout }}"
+          - "Command stderr: {{ command_result.stderr }}"
+    - name: Fail the play if the previous command did not succeed
+      fail: msg="the command failed"
+      when: "'FAILED' in command_result.stderr"
+    - name: Wait until server shutdown is done
+      pause:
+        seconds: 3

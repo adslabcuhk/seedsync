@@ -1,0 +1,8 @@
+build/
+dependent-package/
+.vscode/
+bin/
+lib/
+ThirdPartyLib/
+report
+report/

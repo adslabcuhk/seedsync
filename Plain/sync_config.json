@@ -1,0 +1,39 @@
+{
+    "Segment": {
+        "max_seg_size": 1048576
+    },
+    "Chunk": {
+        "max_chunk_size": 16384,
+        "avg_chunk_size": 8192,
+        "min_chunk_size": 4096
+    },
+    "OutsideDB": {
+        "out_seg_db_name": "out-seg-db",
+        "out_chunk_db_name": "db1",
+        "out_feature_db_name": "out-feature-db"
+    },
+    "Cloud_1": {
+        "id": 1,
+        "ip": "192.168.11.215",
+        "p1_send_port": 16666,
+        "p3_recv_port": 16667,
+        "p3_send_port": 16668,
+        "p5_recv_port": 16669,
+        "p5_send_port": 16670,
+        "file_root_path": "Cloud-1-File-Pool/"
+    },
+    "Cloud_2": {
+        "id": 2,
+        "ip": "192.168.11.214",
+        "p2_recv_port": 16666,
+        "p2_send_port": 16667,
+        "p4_recv_port": 16668,
+        "p4_send_port": 16669,
+        "p6_recv_port": 16670,
+        "file_root_path": "Cloud-2-File-Pool/"
+    },
+    "Sender": {
+        "send_data_batch_size": 128,
+        "send_meta_batch_size": 1024
+    }
+}

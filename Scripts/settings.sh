@@ -1,0 +1,338 @@
+#!/bin/bash
+. /etc/profile
+# Common params for all experiments
+UserName="yjren"                                                  # The user name of all the previous nodes
+sudoPasswd="981208"                                               # The sudo password of all the previous nodes; we use this to install the required packages automatically; we assume all the nodes have the same user name.
+PathToArtifact="/home/${UserName}/SeedSync-ICDCS25/SeedSync" # The path to the artifact folder; we assume all the nodes have the same path.
+PathToRsyncrypto="/home/${UserName}/Applications/rsyncrypto"      # The path to the Rsyncrypto folder; we assume all the nodes have the same path.
+PathToTraces="/home/${UserName}/Data"                             # The path to the traces folder; we assume all the nodes have the same path.
+PathToRunningLogs="/home/${UserName}/SeedSyncExpLogs"           # The path to the log folder for storing the experiment logs; we assume all the nodes have the same path.
+RemoteHostForRsyncrypto="sgxv2-2"
+# PathToDBEPrototype="${PathToArtifact}/DBE-SGX"
+PathToDBEPrototype="/home/${UserName}/SeedSync-ICDCS25/DEBE/Prototype"
+PathToSyncPrototype="${PathToArtifact}/SeedSync"
+PathToPlainDedupPrototype="${PathToArtifact}/Plain-Dedup"
+PathToPlainSyncPrototype="${PathToArtifact}/Plain"
+PathToScripts="${PathToArtifact}/Scripts"
+PathToRsyncTempFolder="/home/${UserName}/rsyncTmp"
+
+# Ethernet interface
+EthInterface="eth0"
+
+workloadsGCC=(
+    000-gcc-2.95.0.tar
+    001-gcc-2.95.1.tar
+    002-gcc-2.95.2.tar
+    003-gcc-2.95.2.1.tar
+    004-gcc-2.95.3.tar
+    005-gcc-3.0.0.tar
+    006-gcc-3.0.1.tar
+    007-gcc-3.0.2.tar
+    008-gcc-3.0.3.tar
+    009-gcc-3.0.4.tar
+    010-gcc-3.1.0.tar
+    011-gcc-3.1.1.tar
+    012-gcc-3.2.0.tar
+    013-gcc-3.2.1.tar
+    014-gcc-3.2.2.tar
+    015-gcc-3.2.3.tar
+    016-gcc-3.3.0.tar
+    017-gcc-3.3.1.tar
+    018-gcc-3.3.2.tar
+    019-gcc-3.3.3.tar
+    020-gcc-3.3.4.tar
+    021-gcc-3.3.5.tar
+    022-gcc-3.3.6.tar
+    023-gcc-3.4.0.tar
+    024-gcc-3.4.1.tar
+    025-gcc-3.4.2.tar
+    026-gcc-3.4.3.tar
+    027-gcc-3.4.4.tar
+    028-gcc-3.4.5.tar
+    029-gcc-3.4.6.tar
+    030-gcc-4.0.0.tar
+    031-gcc-4.0.1.tar
+    032-gcc-4.0.2.tar
+    033-gcc-4.0.3.tar
+    034-gcc-4.0.4.tar
+    035-gcc-4.1.0.tar
+    036-gcc-4.1.1.tar
+    037-gcc-4.1.2.tar
+    038-gcc-4.2.0.tar
+    039-gcc-4.2.1.tar
+    040-gcc-4.2.2.tar
+    041-gcc-4.2.3.tar
+    042-gcc-4.2.4.tar
+    043-gcc-4.3.0.tar
+    044-gcc-4.3.1.tar
+    045-gcc-4.3.2.tar
+    046-gcc-4.3.3.tar
+    047-gcc-4.3.4.tar
+    048-gcc-4.3.5.tar
+    049-gcc-4.3.6.tar
+)
+
+workloadsWEB=(
+    2016-06-13.tar
+    2016-06-15.tar
+    2016-06-16.tar
+    2016-06-17.tar
+    2016-06-18.tar
+    2016-06-20.tar
+    2016-06-22.tar
+    2016-06-23.tar
+    2016-06-24.tar
+    2016-06-25.tar
+    2016-06-26.tar
+    2016-06-27.tar
+    2016-06-28.tar
+    2016-06-29.tar
+    2016-06-30.tar
+    2016-07-01.tar
+    2016-07-02.tar
+    2016-07-03.tar
+    2016-07-04.tar
+    2016-07-05.tar
+    2016-07-06.tar
+    2016-07-07.tar
+    2016-07-08.tar
+    2016-07-09.tar
+    2016-07-10.tar
+    2016-07-11.tar
+    2016-07-12.tar
+    2016-07-13.tar
+    2016-07-14.tar
+    2016-07-15.tar
+    2016-07-16.tar
+    2016-07-17.tar
+    2016-07-18.tar
+    2016-07-19.tar
+    2016-07-20.tar
+    2016-07-21.tar
+    2016-07-22.tar
+    2016-07-23.tar
+    2016-07-24.tar
+    2016-07-25.tar
+    2016-07-26.tar
+    2016-07-27.tar
+    2016-07-28.tar
+    2016-07-29.tar
+    2016-07-30.tar
+    2016-07-31.tar
+    2016-08-01.tar
+    2016-08-02.tar
+    2016-08-03.tar
+    2016-08-04.tar
+)
+
+workloadsLinux=(
+    000-v3.0.tar
+    001-v3.0-rc1.tar
+    002-v3.0-rc2.tar
+    003-v3.0-rc3.tar
+    004-v3.0-rc4.tar
+    005-v3.0-rc5.tar
+    006-v3.0-rc6.tar
+    007-v3.0-rc7.tar
+    008-v3.1.tar
+    009-v3.1-rc1.tar
+    010-v3.1-rc2.tar
+    011-v3.1-rc3.tar
+    012-v3.1-rc4.tar
+    013-v3.1-rc5.tar
+    014-v3.1-rc6.tar
+    015-v3.1-rc7.tar
+    016-v3.1-rc8.tar
+    017-v3.1-rc9.tar
+    018-v3.1-rc10.tar
+    019-v3.2.tar
+    020-v3.2-rc1.tar
+    021-v3.2-rc2.tar
+    022-v3.2-rc3.tar
+    023-v3.2-rc4.tar
+    024-v3.2-rc5.tar
+    025-v3.2-rc6.tar
+    026-v3.2-rc7.tar
+    027-v3.3.tar
+    028-v3.3-rc1.tar
+    029-v3.3-rc2.tar
+    030-v3.3-rc3.tar
+    031-v3.3-rc4.tar
+    032-v3.3-rc5.tar
+    033-v3.3-rc6.tar
+    034-v3.3-rc7.tar
+    035-v3.4.tar
+    036-v3.4-rc1.tar
+    037-v3.4-rc2.tar
+    038-v3.4-rc3.tar
+    039-v3.4-rc4.tar
+    040-v3.4-rc5.tar
+    041-v3.4-rc6.tar
+    042-v3.4-rc7.tar
+    043-v3.5.tar
+    044-v3.5-rc1.tar
+    045-v3.5-rc2.tar
+    046-v3.5-rc3.tar
+    047-v3.5-rc4.tar
+    048-v3.5-rc5.tar
+    049-v3.5-rc6.tar
+)
+
+workloadsTensor=(
+    000-0.6.0.tar
+    001-0.7.0.tar
+    002-0.7.1.tar
+    003-0.8.0.tar
+    004-0.8.0rc0.tar
+    005-0.9.0.tar
+    006-0.9.0rc0.tar
+    007-0.10.0.tar
+    008-0.10.0rc0.tar
+    009-0.11.0.tar
+    010-0.11.0rc0.tar
+    011-0.11.0rc1.tar
+    012-0.11.0rc2.tar
+    013-0.12.0.tar
+    014-1.0.0.tar
+    015-1.0.0-alpha.tar
+    016-1.0.0-rc0.tar
+    017-1.0.0-rc1.tar
+    018-1.0.0-rc2.tar
+    019-1.0.1.tar
+    020-1.1.0.tar
+    021-1.1.0-rc0.tar
+    022-1.1.0-rc1.tar
+    023-1.1.0-rc2.tar
+    024-1.2.0.tar
+    025-1.2.0-rc0.tar
+    026-1.2.0-rc1.tar
+    027-1.2.0-rc2.tar
+    028-1.2.1.tar
+    029-1.3.0.tar
+    030-1.3.0-rc0.tar
+    031-1.3.0-rc1.tar
+    032-1.3.0-rc2.tar
+    033-1.3.1.tar
+    034-1.4.0.tar
+    035-1.4.0-rc0.tar
+    036-1.4.0-rc1.tar
+    037-1.4.1.tar
+    038-1.5.0.tar
+    039-1.5.0-rc0.tar
+    040-1.5.0-rc1.tar
+    041-1.5.1.tar
+    042-1.6.0.tar
+    043-1.6.0-rc0.tar
+    044-1.6.0-rc1.tar
+    045-1.7.0.tar
+    046-1.7.0-rc0.tar
+    047-1.7.0-rc1.tar
+    048-1.7.1.tar
+    049-1.8.0.tar
+)
+
+workloadsChromium=(
+    000-3.0.195.25.tar
+    001-3.0.195.27.tar
+    002-3.0.195.33.tar
+    003-3.0.195.36.tar
+    004-3.0.195.37.tar
+    005-4.0.212.1.tar
+    006-4.0.221.8.tar
+    007-4.0.222.0.tar
+    008-4.0.223.0.tar
+    009-4.0.224.0.tar
+    010-5.0.306.0.tar
+    011-5.0.307.1.tar
+    012-5.0.308.0.tar
+    013-5.0.309.0.tar
+    014-5.0.313.0.tar
+    015-6.0.397.0.tar
+    016-6.0.398.0.tar
+    017-6.0.399.0.tar
+    018-6.0.400.0.tar
+    019-6.0.401.0.tar
+    020-7.0.497.0.tar
+    021-7.0.498.0.tar
+    022-7.0.499.0.tar
+    023-7.0.500.0.tar
+    024-7.0.503.0.tar
+    025-8.0.549.0.tar
+    026-8.0.550.0.tar
+    027-8.0.551.0.tar
+    028-8.0.552.0.tar
+    029-8.0.552.1.tar
+    030-9.0.562.0.tar
+    031-9.0.563.0.tar
+    032-9.0.564.0.tar
+    033-9.0.565.0.tar
+    034-9.0.566.0.tar
+    035-10.0.601.0.tar
+    036-10.0.602.0.tar
+    037-10.0.603.0.tar
+    038-10.0.604.0.tar
+    039-10.0.605.0.tar
+    040-11.0.652.0.tar
+    041-11.0.653.0.tar
+    042-11.0.654.0.tar
+    043-11.0.655.0.tar
+    044-11.0.656.0.tar
+    045-12.0.700.0.tar
+    046-12.0.701.0.tar
+    047-12.0.702.0.tar
+    048-12.0.703.0.tar
+    049-12.0.704.0.tar
+)
+
+workloadsCassandra=(
+    000-2.tar
+    001-2.0.tar
+    002-2.0.14.tar
+    003-2.0.15.tar
+    004-2.0.16.tar
+    006-2.1.tar
+    007-2.1.5.tar
+    008-2.1.6.tar
+    009-2.1.7.tar
+    010-2.1.8.tar
+    011-2.1.9.tar
+    014-2.1.12.tar
+    015-2.1.13.tar
+    016-2.1.14.tar
+    017-2.1.15.tar
+    018-2.1.16.tar
+    019-2.1.17.tar
+    020-2.1.18.tar
+    021-2.1.19.tar
+    022-2.1.20.tar
+    023-2.1.21.tar
+    026-2.2.0.tar
+    027-2.2.1.tar
+    028-2.2.2.tar
+    029-2.2.3.tar
+    030-2.2.4.tar
+    031-2.2.5.tar
+    032-2.2.6.tar
+    033-2.2.7.tar
+    034-2.2.8.tar
+    035-2.2.9.tar
+    036-2.2.10.tar
+    037-2.2.11.tar
+    038-2.2.12.tar
+    039-2.2.13.tar
+    040-2.2.14.tar
+    041-2.2.15.tar
+    042-2.2.16.tar
+    044-3.tar
+    045-3.0.tar
+    046-3.0.0.tar
+    047-3.0.1.tar
+    048-3.0.2.tar
+    049-3.0.3.tar
+    050-3.0.4.tar
+    051-3.0.5.tar
+    052-3.0.6.tar
+    053-3.0.7.tar
+    054-3.0.8.tar
+    055-3.0.9.tar
+)

@@ -1,0 +1,1263 @@
+/**
+ * @file sync_data_writer.cc
+ * @author Jia Zhao (jzhao@cse.cuhk.edu.hk)
+ * @brief 
+ * @version 0.1
+ * @date 2024-03-13
+ * 
+ * @copyright Copyright (c) 2024
+ * 
+ */
+
+#include "../../include/sync_data_writer.h"
+
+struct timeval stream6_stime;
+struct timeval stream6_etime;
+
+/**
+ * @brief Construct a new Sync Data Writer object
+ * 
+ * @param sgx_eid 
+ * @param out_fp_db 
+ */
+SyncDataWriter::SyncDataWriter(SyncIO* sync_io, AbsDatabase* out_fp_db) {
+// #if (CONTAINER_META_SESSION == 1)
+
+    // sgx_eid_ = sgx_eid;
+    out_fp_db_ = out_fp_db;
+
+    // for chunk outquery
+    out_chunk_query_.OutChunkQueryBase = (OutChunkQueryEntry_t*) malloc(sizeof(OutChunkQueryEntry_t) * 
+        sync_config.GetDataBatchSize());
+    out_chunk_query_.queryNum = 0;
+
+    // for chunk outquery
+    update_index_.OutChunkQueryBase = (OutChunkQueryEntry_t*) malloc(sizeof(OutChunkQueryEntry_t) * 
+        sync_config.GetDataBatchSize());
+    update_index_.queryNum = 0;
+
+    // for debug
+    debug_index_.OutChunkQueryBase = (OutChunkQueryEntry_t*) malloc(sizeof(OutChunkQueryEntry_t) * 
+        sync_config.GetDataBatchSize());
+    debug_index_.queryNum = 0;
+
+    // container write buffer
+    container_buf_.currentSize = 0;
+    container_buf_.currentMetaSize = 0;
+    tool::CreateUUID(container_buf_.containerID, CONTAINER_ID_LENGTH);
+    // container_buf_.containerID = (char*) malloc(sizeof(uint8_t) * CONTAINER_ID_LENGTH);
+    // tool::CreateUUID(container_buf_.containerID, CONTAINER_ID_LENGTH);
+    // container_buf_.body = (uint8_t*) malloc(sizeof(uint8_t) * MAX_CONTAINER_SIZE);
+    // container_buf_.metadata = (uint8_t*) malloc(sizeof(uint8_t) * 73728);
+    // container_buf_.currentSize = 0;
+    // container_buf_.currentMetaSize = 0;
+    
+    // init req container buffer
+    req_containers_.idBuffer = (uint8_t*) malloc(CONTAINER_CAPPING_VALUE * 
+        CONTAINER_ID_LENGTH);
+    req_containers_.containerArray = (uint8_t**) malloc(CONTAINER_CAPPING_VALUE * 
+        sizeof(uint8_t*));
+    req_containers_.idNum = 0;
+    for (size_t i = 0; i < CONTAINER_CAPPING_VALUE; i++) {
+        req_containers_.containerArray[i] = (uint8_t*) malloc(sizeof(uint8_t) * 
+            MAX_CONTAINER_SIZE);
+    }
+    req_containers_.sizeArray = (uint32_t*) malloc(CONTAINER_CAPPING_VALUE * 
+        sizeof(uint32_t));
+
+    sync_io_ = sync_io;
+
+    // for feature gen
+    finesse_util_ = new FinesseUtil(SUPER_FEATURE_PER_CHUNK,    
+        FEATURE_PER_CHUNK, FEATURE_PER_SUPER_FEATURE);
+    rabin_util_ = new RabinFPUtil(SLIDING_WIN_SIZE);
+    rabin_util_->NewCtx(rabin_ctx_);
+
+    crypto_util_ = new CryptoPrimitive(CIPHER_TYPE, HASH_TYPE, HMAC_TYPE);
+
+    plain_in_buf_ = (uint8_t*)malloc(sync_config.GetDataBatchSize() * (MAX_CHUNK_SIZE + sizeof(uint32_t) + sizeof(uint8_t) + CHUNK_HASH_HMAC_SIZE));
+
+    batch_fp_index_.reserve(sync_config.GetDataBatchSize());
+
+    tool::Logging(my_name_.c_str(), "init SyncDataWriter.\n");
+
+// #endif
+}
+
+/**
+ * @brief Destroy the Sync Data Writer object
+ * 
+ */
+SyncDataWriter::~SyncDataWriter() {
+// #if (CONTAINER_META_SESSION == 1)
+    free(req_containers_.idBuffer);
+    for (size_t i = 0; i < CONTAINER_CAPPING_VALUE; i++) {
+        free(req_containers_.containerArray[i]);
+    }
+    free(req_containers_.containerArray);
+    free(req_containers_.sizeArray);
+
+    free(out_chunk_query_.OutChunkQueryBase);
+    free(update_index_.OutChunkQueryBase);
+
+    free(debug_index_.OutChunkQueryBase);
+
+    rabin_util_->FreeCtx(rabin_ctx_);
+    delete rabin_util_;
+    delete finesse_util_;
+
+    free(plain_in_buf_);
+
+    delete crypto_util_;
+
+    // // delete container_buf_;
+    // free(container_buf_.containerID);
+    // free(container_buf_.body);
+    // free(container_buf_.metadata);
+// #endif
+}
+
+/**
+ * @brief process a batch of recv data
+ * 
+ * @param recv_buf 
+ * @param recv_size 
+ */
+void SyncDataWriter::ProcessOneBatch(uint8_t* recv_buf, uint32_t recv_size) {
+// #if (CONTAINER_META_SESSION == 1)
+    // do ecall: dec data with sessionkey, delta decode data if necessary, 
+    // generate chunkHash, features -> insert the global chunk index; prepare the container meta session
+    // enc data with data key, write container (with meta session)
+    // cout<<"sync data writer, recv size = "<<recv_size<<endl;
+
+    // do ecall to decode & write & update index
+// #if (RECOVER_CHECK == 0)
+//     Ecall_Stream_Phase6_ProcessBatch(sgx_eid_, recv_buf, recv_size, 
+//         &req_containers_, &out_chunk_query_, &container_buf_, &update_index_);
+// #endif    
+
+// #if (RECOVER_CHECK == 1)
+//     Ecall_Stream_Phase6_ProcessBatch_Debug(sgx_eid_, recv_buf, recv_size, 
+//         &req_containers_, &out_chunk_query_, &container_buf_, &update_index_,
+//         &debug_index_);
+// #endif
+
+    gettimeofday(&stream6_stime, NULL);
+
+    ProcessPlainBatch(recv_buf, recv_size, 
+        &req_containers_, &out_chunk_query_, &container_buf_, &update_index_,
+        &debug_index_);
+    
+    // reset
+    update_index_.queryNum = 0;
+    out_chunk_query_.queryNum = 0;
+
+    gettimeofday(&stream6_etime, NULL);
+    stream6_process_time_ += tool::GetTimeDiff(stream6_stime, stream6_etime);
+
+// #endif
+
+    return ;
+}
+
+/**
+ * @brief process the tail batch
+ * 
+ */
+void SyncDataWriter::ProcessTailBatch() {
+
+    gettimeofday(&stream6_stime, NULL);
+
+    // write the tail container
+    if (container_buf_.currentSize != 0) {
+        // Ocall_WriteSyncContainer(&container_buf_);
+        sync_io_->SyncIO_WriteSyncContainer(&container_buf_);
+    }
+
+    // update the tail metadata
+    if (update_index_.queryNum != 0) {
+        // Ocall_UpdateOutFPIndex((void*)&update_index_);
+        sync_io_->SyncIO_UpdateOutFPIndex((void*)&update_index_);
+    }
+
+    // debug
+    if (debug_index_.queryNum != 0) {
+        // Ocall_CheckDebugIndex((void*)&debug_index_);
+        sync_io_->SyncIO_CheckDebugIndex((void*)&debug_index_);
+    }
+
+    gettimeofday(&stream6_etime, NULL);
+    stream6_process_time_ += tool::GetTimeDiff(stream6_stime, stream6_etime);
+
+    return ;
+}
+
+/**
+ * @brief process plain batch
+ * 
+ * @param recv_buf 
+ * @param recv_size 
+ * @param req_container 
+ * @param base_addr_query 
+ * @param container_buf 
+ * @param update_index 
+ */
+void SyncDataWriter::ProcessPlainBatch(uint8_t* recv_buf, uint32_t recv_size, 
+    ReqContainer_t* req_container, OutChunkQuery_t* base_addr_query,
+    Container_t* container_buf, OutChunkQuery_t* update_index,
+    OutChunkQuery_t* debug_check_quary) {
+
+    _total_recv_size += recv_size;
+
+    // dec the recv batch
+    // crypto_util_->DecryptWithKey(cipher_ctx_, recv_buf, recv_size, session_key_, 
+    //     plain_in_buf_);
+    memcpy(plain_in_buf_, recv_buf, recv_size);
+
+    // SyncEnclave::Logging("in streamwriter ", "recv size = %d\n", recv_size);
+
+    uint32_t process_size = 0;
+
+    uint8_t* id_buf = req_container->idBuffer;
+    uint8_t** container_array = req_container->containerArray;
+
+    string tmp_container_id;
+    unordered_map<string, uint32_t> tmp_container_map;
+    tmp_container_map.reserve(CONTAINER_CAPPING_VALUE);
+
+    // prepare the addr query for base chunk
+    OutChunkQueryEntry_t* tmp_query_entry = base_addr_query->OutChunkQueryBase;
+    uint32_t query_num = 0;
+
+    // the chunk addr (to be updated in outside indexes)
+    OutChunkQueryEntry_t* tmp_update_entry = update_index->OutChunkQueryBase;
+    update_index->queryNum = 0;
+    uint32_t update_num = 0;
+
+    // the debug check query
+    OutChunkQueryEntry_t* tmp_debug_entry = debug_check_quary->OutChunkQueryBase;
+    debug_check_quary->queryNum = 0;
+    uint32_t debug_num = 0;
+
+    // prepare the batch fp index
+    batch_fp_index_.clear();
+    BatchAddrValue_t tmp_batch_addr_value;
+
+    // process recv batch
+    while(process_size != recv_size) {
+        // SyncEnclave::Logging("process size = ; recv size = ", "%d, %d\n", process_size, recv_size);
+
+        // recv chunk format [chunkSize || chunkType || (baseHash) || chunkData]
+        uint32_t cur_size = *(uint32_t*)(plain_in_buf_ + process_size);
+        process_size += sizeof(uint32_t);
+        uint8_t cur_type = *(uint8_t*)(plain_in_buf_ + process_size);
+        process_size += sizeof(uint8_t);
+
+        // SyncEnclave::Logging("recv chunksize ", "%d\n", cur_size);
+        // SyncEnclave::Logging("recv chunkType ", "%d\n", cur_type);
+
+        tmp_batch_addr_value.type = cur_type;
+        tmp_batch_addr_value.size = cur_size;
+        tmp_batch_addr_value.offset = process_size;
+
+        uint8_t* cur_iv = this->PickNewIV();
+
+        uint8_t tmp_enc_chunk[MAX_CHUNK_SIZE];
+        uint8_t cur_hash[CHUNK_HASH_HMAC_SIZE];
+        uint64_t cur_feature[SUPER_FEATURE_PER_CHUNK];
+        uint8_t tmp_original_chunk[MAX_CHUNK_SIZE];
+        int tmp_original_size = 0;
+        uint8_t tmp_compress_chunk[MAX_CHUNK_SIZE];
+        int tmp_compress_size = 0;
+
+        if (cur_type == COMP_ONLY_CHUNK) {
+            uint8_t* cur_data = plain_in_buf_ + process_size;
+            // do decompression before generate chunkhash !!!!!
+            tmp_original_size = LZ4_decompress_safe((char*)cur_data, 
+                (char*)tmp_original_chunk, cur_size, MAX_CHUNK_SIZE);
+            if (tmp_original_size > 0) {
+                // SyncEnclave::Logging("can decomp ","decompsize = %d\n", tmp_original_size);
+            }
+            else {
+                // SyncEnclave::Logging("cannot decomp ","compsize = %d, decompsize = %d\n", cur_size, tmp_original_size);
+
+                memcpy(tmp_original_chunk, cur_data, cur_size);
+                tmp_original_size = cur_size;
+
+                tool::Logging("cannot decomp ","decompsize = %d\n", tmp_original_size);
+
+                // // debug
+                // uint8_t check_hash[CHUNK_HASH_HMAC_SIZE];
+                // crypto_util_->GenerateHMAC(tmp_original_chunk, tmp_original_size,
+                //     check_hash);
+                // Ocall_PrintfBinary(check_hash, CHUNK_HASH_HMAC_SIZE);
+                // crypto_util_->GenerateHMAC(cur_data, cur_size,
+                //     check_hash);
+                // Ocall_PrintfBinary(check_hash, CHUNK_HASH_HMAC_SIZE);
+            }
+
+            // generate chunkhash
+            crypto_util_->GenerateHMAC(tmp_original_chunk, tmp_original_size, cur_hash);
+            // insert the chunk to batch index
+            string tmp_key;
+            tmp_key.assign((char*)cur_hash, CHUNK_HASH_HMAC_SIZE);
+            batch_fp_index_.insert(make_pair(tmp_key, tmp_batch_addr_value));
+
+            // // debug: check batch fp insert
+            // SyncEnclave::Logging("batch fp index insert", "\n");
+            // Ocall_PrintfBinary(cur_hash, CHUNK_HASH_HMAC_SIZE);
+            // string check_query;
+            // check_query.assign((char*)cur_hash, CHUNK_HASH_HMAC_SIZE);
+            // auto check_find = batch_fp_index_.find(check_query);
+            // if (check_find != batch_fp_index_.end()) {
+            //     SyncEnclave::Logging("insert found", "\n");
+            // }
+
+            // SyncEnclave::Logging("before features ","decompsize = %d\n", tmp_original_size);
+
+            // extract features
+            this->ExtractFeature(rabin_ctx_, tmp_original_chunk, tmp_original_size, cur_feature);
+            
+            // SyncEnclave::Logging("after feature, before index enc","\n");
+
+            // debug check
+            memcpy(tmp_debug_entry->chunkHash, cur_hash, CHUNK_HASH_HMAC_SIZE);
+            tmp_debug_entry->dedupFlag = COMP_ONLY_CHUNK;
+            tmp_debug_entry ++;
+            debug_num ++;
+
+            // save chunk to container
+            // crypto_util_->IndexAESCMCEnc(cipher_ctx_, cur_hash, CHUNK_HASH_HMAC_SIZE,
+            //     SyncEnclave::index_query_key_, tmp_update_entry->chunkHash);
+            memcpy(tmp_update_entry->chunkHash, cur_hash, CHUNK_HASH_HMAC_SIZE);
+            // SyncEnclave::Logging("after index enc","\n");
+
+            // enc with data key, write to container
+            // crypto_util_->EncryptWithKeyIV(cipher_ctx_, cur_data, cur_size,
+            //     SyncEnclave::enclave_key_, tmp_enc_chunk, cur_iv);
+            memcpy(tmp_enc_chunk, cur_data, cur_size);
+
+            this->SaveChunk(container_buf, tmp_enc_chunk, cur_size, cur_iv, cur_hash, 
+                cur_feature, &tmp_update_entry->value);
+
+            // move on
+            process_size += cur_size;
+            tmp_update_entry ++;
+            update_num ++;
+            // SyncEnclave::Logging("update num ","%d\n", update_num);
+
+            _only_comp_size += cur_size;
+        }
+        else if (cur_type == DELTA_ONLY_CHUNK) {
+
+            // record the cur delta chunk
+            uint32_t record_offset = process_size;
+            uint32_t record_size = cur_size;
+
+            // read base chunk for decoding
+            uint8_t* base_hash = plain_in_buf_ + process_size;
+            process_size += CHUNK_HASH_HMAC_SIZE;
+            uint8_t* delta_data = plain_in_buf_ + process_size;
+            process_size += cur_size;
+
+            _comp_delta_size += cur_size;
+
+            // // debug
+            // uint8_t check_basehash[CHUNK_HASH_HMAC_SIZE];
+            // memcpy(check_basehash, base_hash, CHUNK_HASH_HMAC_SIZE);
+
+            string query_local;
+            query_local.assign((char*)base_hash, CHUNK_HASH_HMAC_SIZE);
+
+            auto local_find = batch_fp_index_.find(query_local);
+            if (local_find != batch_fp_index_.end()) {
+
+                // SyncEnclave::Logging("writer check base: local delta only", "\n");
+                // Ocall_PrintfBinary(check_basehash, CHUNK_HASH_HMAC_SIZE);
+                // TODO: ????? what if it does not exist in current container, but has been writen
+
+                // get the base chunk in current batch
+                if (local_find->second.type != COMP_ONLY_CHUNK) {
+                    tool::Logging("error ", "multi-level delta\n");
+                    continue;
+                }
+                
+                // delta decode
+                tmp_original_size = DeltaDecode(plain_in_buf_ + local_find->second.offset,
+                    local_find->second.size, delta_data, cur_size, tmp_original_chunk);
+                
+                // SyncEnclave::Logging("batch local decode size 7: ", "original = %d; decode = %d\n", cur_size,tmp_original_size);
+                
+                // generate chunkhash
+                crypto_util_->GenerateHMAC(tmp_original_chunk, tmp_original_size, cur_hash);
+                // extract features
+                this->ExtractFeature(rabin_ctx_, tmp_original_chunk, tmp_original_size, cur_feature);
+
+
+                // debug check
+                memcpy(tmp_debug_entry->chunkHash, cur_hash, CHUNK_HASH_HMAC_SIZE);
+                tmp_debug_entry->dedupFlag = LOCAL_DELTA_ONLY_CHUNK;
+                tmp_debug_entry ++;
+                debug_num ++;
+                
+                // local compress
+                tmp_compress_size = LZ4_compress_fast((char*)tmp_original_chunk, 
+                    (char*)tmp_compress_chunk, tmp_original_size, tmp_original_size,
+                    3);
+                if (tmp_compress_size > 0) {
+                    // it can be compressed
+                    // do encryption
+                    // crypto_util_->EncryptWithKeyIV(cipher_ctx_, tmp_compress_chunk, 
+                    //     tmp_compress_size, SyncEnclave::enclave_key_, tmp_enc_chunk, 
+                    //     cur_iv);
+                    memcpy(tmp_enc_chunk, tmp_compress_chunk, tmp_compress_size);    
+
+                    // crypto_util_->IndexAESCMCEnc(cipher_ctx_, cur_hash, CHUNK_HASH_HMAC_SIZE,
+                    //     SyncEnclave::index_query_key_, tmp_update_entry->chunkHash);
+                    memcpy(tmp_update_entry->chunkHash, cur_hash, CHUNK_HASH_HMAC_SIZE);
+                    SaveChunk(container_buf, tmp_enc_chunk, tmp_compress_size, cur_iv, cur_hash, 
+                        cur_feature, &tmp_update_entry->value);
+                    
+                    _comp_similar_size += tmp_compress_size;
+                }
+                else {
+                    // it cannot be compressed
+                    // do encryption
+                    // crypto_util_->EncryptWithKeyIV(cipher_ctx_, tmp_original_chunk, 
+                    //     tmp_original_size, SyncEnclave::enclave_key_, tmp_enc_chunk, 
+                    //     cur_iv);
+                    memcpy(tmp_enc_chunk, tmp_original_chunk, tmp_original_size);    
+
+                    // crypto_util_->IndexAESCMCEnc(cipher_ctx_, cur_hash, CHUNK_HASH_HMAC_SIZE,
+                    //     SyncEnclave::index_query_key_, tmp_update_entry->chunkHash);
+                    memcpy(tmp_update_entry->chunkHash, cur_hash, CHUNK_HASH_HMAC_SIZE);
+                    SaveChunk(container_buf, tmp_enc_chunk, tmp_original_size, cur_iv, cur_hash, 
+                        cur_feature, &tmp_update_entry->value);
+
+                    _comp_similar_size += tmp_original_size;
+                }
+
+                // move on
+                tmp_update_entry ++;
+                update_num ++;
+            }
+            else {
+                // SyncEnclave::Logging("writer check base: delta only", "\n");
+                // Ocall_PrintfBinary(check_basehash, CHUNK_HASH_HMAC_SIZE);
+
+                // get the base chunk in outside container
+                // crypto_util_->IndexAESCMCEnc(cipher_ctx_, base_hash, CHUNK_HASH_HMAC_SIZE,
+                //     SyncEnclave::index_query_key_, tmp_query_entry->chunkHash);
+                memcpy(tmp_query_entry->chunkHash, base_hash, CHUNK_HASH_HMAC_SIZE);
+                query_num ++;
+                tmp_query_entry ++;
+
+                // record the offset and size of the delta chunk in plain_buf
+                DeltaBatchAddrValue_t tmp_record_addr;
+                tmp_record_addr.offset = record_offset; // [baseHash || delta chunk]
+                tmp_record_addr.size = record_size;
+                tmp_record_addr.type = DELTA_ONLY_CHUNK;
+                pending_delta_list_.push(tmp_record_addr);
+            }
+
+        }
+        else if (cur_type == DELTA_COMP_CHUNK) {
+
+            // record the cur delta chunk
+            uint32_t record_offset = process_size;
+            uint32_t record_size = cur_size;
+
+            uint8_t* base_hash = plain_in_buf_ + process_size;
+            process_size += CHUNK_HASH_HMAC_SIZE;
+            uint8_t* comp_delta_data = plain_in_buf_ + process_size;
+            process_size += cur_size;
+
+            _comp_delta_size += cur_size;
+
+            // // debug: check the basehash
+            // uint8_t check_basehash[CHUNK_HASH_HMAC_SIZE];
+            // memcpy(check_basehash, base_hash, CHUNK_HASH_HMAC_SIZE);
+            // SyncEnclave::Logging("writer check base hash1", "\n");
+            // Ocall_PrintfBinary(check_basehash, CHUNK_HASH_HMAC_SIZE);
+
+            // decompress the delta first
+            uint8_t tmp_decomp_chunk[MAX_CHUNK_SIZE];
+            int tmp_decomp_size = LZ4_decompress_safe((char*)comp_delta_data, 
+                (char*)tmp_decomp_chunk, cur_size, MAX_CHUNK_SIZE);
+            
+            if (tmp_decomp_size > 0) {
+
+            }
+            else {
+                memcpy(tmp_decomp_chunk, comp_delta_data, cur_size);
+                tmp_decomp_size = cur_size;
+            }
+
+            string query_local;
+            query_local.assign((char*)base_hash, CHUNK_HASH_HMAC_SIZE);
+
+            auto local_find = batch_fp_index_.find(query_local);
+            if (local_find != batch_fp_index_.end()) {
+                // get the base chunk in current batch
+                if (local_find->second.type != COMP_ONLY_CHUNK) {
+                    tool::Logging("error ", "multi-level delta\n");
+                    continue;
+                }
+
+                // SyncEnclave::Logging("writer check base: local delta comp", "\n");
+                // Ocall_PrintfBinary(check_basehash, CHUNK_HASH_HMAC_SIZE);
+
+                // delta decode
+                tmp_original_size = DeltaDecode(plain_in_buf_ + local_find->second.offset, 
+                    local_find->second.size, tmp_decomp_chunk, tmp_decomp_size, tmp_original_chunk);
+                
+                // SyncEnclave::Logging("batch local decode size 6: ", "original = %d; decode = %d\n", tmp_decomp_size,tmp_original_size);
+
+                // generate chunkhash
+                crypto_util_->GenerateHMAC(tmp_original_chunk, tmp_original_size, cur_hash);
+                // extract features
+                this->ExtractFeature(rabin_ctx_, tmp_original_chunk, tmp_original_size, cur_feature);
+                
+                // debug check
+                memcpy(tmp_debug_entry->chunkHash, cur_hash, CHUNK_HASH_HMAC_SIZE);
+                tmp_debug_entry->dedupFlag = LOCAL_DELTA_COMP_CHUNK;
+                tmp_debug_entry ++;
+                debug_num ++;
+
+                // local compress
+                tmp_compress_size = LZ4_compress_fast((char*)tmp_original_chunk, 
+                    (char*)tmp_compress_chunk, tmp_original_size, tmp_original_size,
+                    3);
+                if (tmp_compress_size > 0) {
+                    // it can be compressed
+                    // do encryption
+                    // crypto_util_->EncryptWithKeyIV(cipher_ctx_, tmp_compress_chunk, 
+                    //     tmp_compress_size, SyncEnclave::enclave_key_, tmp_enc_chunk, 
+                    //     cur_iv);
+                    memcpy(tmp_enc_chunk, tmp_compress_chunk, tmp_compress_size);    
+
+                    // crypto_util_->IndexAESCMCEnc(cipher_ctx_, cur_hash, CHUNK_HASH_HMAC_SIZE,
+                    //     SyncEnclave::index_query_key_, tmp_update_entry->chunkHash);
+                    memcpy(tmp_update_entry->chunkHash, cur_hash, CHUNK_HASH_HMAC_SIZE);
+                    SaveChunk(container_buf, tmp_enc_chunk, tmp_compress_size, cur_iv, cur_hash, 
+                        cur_feature, &tmp_update_entry->value);
+                    
+                    _comp_similar_size += tmp_compress_size;
+                }
+                else {
+                    // it cannot be compressed
+                    // do encryption
+                    // crypto_util_->EncryptWithKeyIV(cipher_ctx_, tmp_original_chunk, 
+                    //     tmp_original_size, SyncEnclave::enclave_key_, tmp_enc_chunk, 
+                    //     cur_iv);
+                    memcpy(tmp_enc_chunk, tmp_original_chunk, tmp_original_size);    
+
+                    // crypto_util_->IndexAESCMCEnc(cipher_ctx_, cur_hash, CHUNK_HASH_HMAC_SIZE,
+                    //     SyncEnclave::index_query_key_, tmp_update_entry->chunkHash);
+                    memcpy(tmp_update_entry->chunkHash, cur_hash, CHUNK_HASH_HMAC_SIZE);
+                    SaveChunk(container_buf, tmp_enc_chunk, tmp_original_size, cur_iv, cur_hash, 
+                        cur_feature, &tmp_update_entry->value);
+                    
+                    _comp_similar_size += tmp_original_size;
+                }
+
+                // move on
+                tmp_update_entry ++;
+                update_num ++;
+            }
+            else {
+                // get the base chunk in outside container
+
+                // // debug: check the basehash
+                // uint8_t check_basehash[CHUNK_HASH_HMAC_SIZE];
+                // memcpy(check_basehash, base_hash, CHUNK_HASH_HMAC_SIZE);
+                // SyncEnclave::Logging("writer check base hash2", "\n");
+                // Ocall_PrintfBinary(check_basehash, CHUNK_HASH_HMAC_SIZE);
+
+                // SyncEnclave::Logging("writer check base: delta comp", "\n");
+                // Ocall_PrintfBinary(check_basehash, CHUNK_HASH_HMAC_SIZE);
+
+                // debug
+                // memcpy(tmp_query_entry->chunkHash, base_hash, CHUNK_HASH_HMAC_SIZE);
+                // crypto_util_->IndexAESCMCEnc(cipher_ctx_, base_hash, CHUNK_HASH_HMAC_SIZE,
+                //     SyncEnclave::index_query_key_, tmp_query_entry->chunkHash);
+                memcpy(tmp_query_entry->chunkHash, base_hash, CHUNK_HASH_HMAC_SIZE);    
+                query_num ++;
+                tmp_query_entry ++;
+
+                // record the offset and size of the delta chunk in plain_buf
+                DeltaBatchAddrValue_t tmp_record_addr;
+                tmp_record_addr.offset = record_offset; // [baseHash || delta chunk]
+                tmp_record_addr.size = record_size;
+                tmp_record_addr.type = DELTA_COMP_CHUNK;
+                pending_delta_list_.push(tmp_record_addr);
+            }
+        }
+    }
+
+    // query to get the base chunk addr
+    base_addr_query->queryNum = query_num;
+    // SyncEnclave::Logging("base query num  = ", "%d\n", query_num);
+    // Ocall_QueryChunkAddr(base_addr_query);
+    sync_io_->SyncIO_QueryChunkAddr(base_addr_query);
+
+    unordered_set<uint32_t> tmp_base_set;
+
+    // point back to base
+    tmp_query_entry = base_addr_query->OutChunkQueryBase;
+    RecipeEntry_t dec_query_entry;
+    EnclaveRecipeEntry_t tmp_base_entry;
+    for (size_t i = 0; i < base_addr_query->queryNum; i++) {
+        // crypto_util_->AESCBCDec(cipher_ctx_, (uint8_t*)&tmp_query_entry->value,
+        // sizeof(RecipeEntry_t), SyncEnclave::index_query_key_, (uint8_t*)&dec_query_entry);
+        memcpy((char*)&dec_query_entry, (char*)&tmp_query_entry->value, sizeof(RecipeEntry_t));
+
+        // SyncEnclave::Logging("base addr offset ", "%d\n", dec_query_entry.offset);
+        // SyncEnclave::Logging("base addr len ", "%d\n", dec_query_entry.length);
+        // Ocall_PrintfBinary((uint8_t*)dec_query_entry.containerName, CONTAINER_ID_LENGTH);
+        // get the chunk addr
+        tmp_container_id.assign((char*)dec_query_entry.containerName, 
+            CONTAINER_ID_LENGTH);
+        
+        tmp_base_entry.offset = dec_query_entry.offset;
+        tmp_base_entry.length = dec_query_entry.length;
+
+        auto tmp_find = tmp_container_map.find(tmp_container_id);
+        if (tmp_find == tmp_container_map.end()) {
+            // unique container
+            tmp_base_entry.containerID = req_container->idNum;
+            tmp_container_map[tmp_container_id] = req_container->idNum;
+            memcpy(id_buf + req_container->idNum * CONTAINER_ID_LENGTH, 
+                tmp_container_id.c_str(), CONTAINER_ID_LENGTH);
+            req_container->idNum ++;
+        }
+        else {
+            tmp_base_entry.containerID = tmp_find->second;
+        }
+        base_addr_list_.push_back(tmp_base_entry);
+
+        if (tmp_query_entry->existFlag == 101) {
+            // record the idx
+            tmp_base_set.insert(i);
+            cout<<"should skip base entry "<<i<<endl;
+        }
+
+        if (req_container->idNum == CONTAINER_CAPPING_VALUE) {
+            // fetch containers
+            // Ocall_SyncGetReqContainer((void*)req_container);
+            // Ocall_SyncGetReqContainerWithSize((void*)req_container);
+            sync_io_->SyncIO_SyncGetReqContainerWithSize((void*)req_container);
+
+            for (size_t k = 0; k < base_addr_list_.size(); k++) {
+                // get the delta chunk for decoding
+                DeltaBatchAddrValue_t tmp_delta_addr = pending_delta_list_.front();
+                pending_delta_list_.pop();
+
+                uint8_t* pending_delta_chunk = plain_in_buf_ + tmp_delta_addr.offset
+                    + CHUNK_HASH_HMAC_SIZE;
+
+                // // debug: calculate the sim chunk hash
+                // uint8_t check_sim_hash[CHUNK_HASH_HMAC_SIZE];
+                // crypto_util_->GenerateHMAC( pending_delta_chunk, tmp_delta_addr.size,
+                //     check_sim_hash);
+                // SyncEnclave::Logging("check pair", "\n");
+                // uint8_t check_base_hash[CHUNK_HASH_HMAC_SIZE];
+                // memcpy(check_base_hash, plain_in_buf_ + tmp_delta_addr.offset, CHUNK_HASH_HMAC_SIZE);
+                // Ocall_PrintfBinary(check_base_hash, CHUNK_HASH_HMAC_SIZE);
+
+                // Ocall_PrintfBinary(check_sim_hash, CHUNK_HASH_HMAC_SIZE);
+
+                // get the base chunk
+                uint32_t base_id = base_addr_list_[k].containerID;
+                uint32_t base_offset = base_addr_list_[k].offset;
+                uint32_t base_size = base_addr_list_[k].length;
+                uint32_t meta_offset = 0;
+                uint8_t* base_chunk_data = nullptr;
+
+                // checking
+                auto check_iter = tmp_base_set.find(k);
+                if (check_iter != tmp_base_set.end()) {
+                    // the base should be skipped
+                    // SyncEnclave::Logging("skip base entry k", "%d\n", k);
+                    tmp_base_set.erase(k);
+                    continue;
+                }
+
+                if (req_container->sizeArray[base_id] == 0) {
+                    // the container is currently in-memory
+                    memcpy((char*)&meta_offset, container_buf, sizeof(uint32_t));
+
+                    base_chunk_data = container_buf->body + base_offset;
+                }
+                else {
+                    memcpy((char*)&meta_offset, container_array[base_id], sizeof(uint32_t));
+                    // SyncEnclave::Logging("check read base ","metaoffset=%d, offset=%d, len=%d\n", meta_offset, base_offset, base_size);
+
+                    base_chunk_data = container_array[base_id] + meta_offset 
+                        + base_offset + sizeof(uint32_t);
+                }
+                
+                // decrypt the base chunk
+                uint8_t plain_base[MAX_CHUNK_SIZE];
+                uint8_t* base_iv = base_chunk_data + base_size;
+                // crypto_util_->DecryptionWithKeyIV(cipher_ctx_, base_chunk_data, base_size,
+                //     SyncEnclave::enclave_key_, plain_base, base_iv);
+                memcpy(plain_base, base_chunk_data, base_size);    
+
+                // // debug: check the plain base data
+                // uint8_t check_plain_base_hash[CHUNK_HASH_HMAC_SIZE];
+                // crypto_util_->GenerateHMAC( plain_base, base_size, check_plain_base_hash);
+                // SyncEnclave::Logging("check plain base hash", "\n");
+                // Ocall_PrintfBinary(check_plain_base_hash, CHUNK_HASH_HMAC_SIZE);
+
+                // delta decode & write
+                uint8_t original_chunk[MAX_CHUNK_SIZE];
+                uint32_t original_size = 0;
+
+                if (tmp_delta_addr.type == DELTA_COMP_CHUNK) {
+                    // decompress the delta first
+                    uint8_t tmp_decomp_chunk[MAX_CHUNK_SIZE];
+                    int tmp_decomp_size = LZ4_decompress_safe((char*)pending_delta_chunk, 
+                        (char*)tmp_decomp_chunk, tmp_delta_addr.size, MAX_CHUNK_SIZE);
+                    
+                    if (tmp_decomp_size <= 0) {
+                        tool::Logging("error ", "decompress error\n");
+                    }
+
+                    // // debug: check the decompress data
+                    // uint8_t check_decomp_hash[CHUNK_HASH_HMAC_SIZE];
+                    // crypto_util_->GenerateHMAC( tmp_decomp_chunk, tmp_decomp_size, check_decomp_hash);
+                    // SyncEnclave::Logging("check decomp hash", "\n");
+                    // Ocall_PrintfBinary(check_decomp_hash, CHUNK_HASH_HMAC_SIZE);
+
+                    original_size = this->DeltaDecode(plain_base, base_size, 
+                        tmp_decomp_chunk, tmp_decomp_size, original_chunk);
+                    
+                    // debug
+                    tmp_debug_entry->dedupFlag = DELTA_COMP_CHUNK;
+                }
+                else if (tmp_delta_addr.type == DELTA_ONLY_CHUNK) {
+                    // // debug: check the decompress data
+                    // uint8_t check_decomp_hash[CHUNK_HASH_HMAC_SIZE];
+                    // crypto_util_->GenerateHMAC( pending_delta_chunk, tmp_delta_addr.size, check_decomp_hash);
+                    // SyncEnclave::Logging("check pending hash", "\n");
+                    // Ocall_PrintfBinary(check_decomp_hash, CHUNK_HASH_HMAC_SIZE);
+
+                    original_size = this->DeltaDecode(plain_base, base_size, 
+                        pending_delta_chunk, tmp_delta_addr.size, original_chunk);
+                    
+                    // debug
+                    tmp_debug_entry->dedupFlag = DELTA_ONLY_CHUNK;
+                }
+                
+                // SyncEnclave::Logging("DELTA_ONLY_CHUNK decode size ", "original = %d; decode = %d; type = %d\n", tmp_delta_addr.size, original_size, tmp_debug_entry->dedupFlag);
+
+                // debug
+                // SyncEnclave::Logging("tail decode size ", "%d\n", original_size);
+                // uint8_t check_hash[CHUNK_HASH_HMAC_SIZE];
+                // crypto_util_->GenerateHMAC( original_chunk, original_size,
+                //     check_hash);
+                // Ocall_PrintfBinary(check_hash, CHUNK_HASH_HMAC_SIZE);
+
+                this->ProcessOneChunk(container_buf, original_chunk, original_size, 
+                    tmp_update_entry, tmp_debug_entry);
+                tmp_debug_entry ++;
+                debug_num ++;
+                // this->ProcessOneChunk(container_buf, original_chunk, original_size, 
+                //     tmp_update_entry);
+
+                // move on
+                tmp_update_entry ++;
+                update_num ++;
+            }
+
+            // reset
+            req_container->idNum = 0;
+            tmp_container_map.clear();
+            base_addr_list_.clear();
+        }
+
+        tmp_query_entry ++;
+    }
+
+    // deal with tail base
+    if (req_container->idNum != 0) {
+        // // debug
+        // uint8_t check_cur_container_id[CONTAINER_ID_LENGTH];
+        // memcpy(check_cur_container_id, container_buf->containerID, CONTAINER_ID_LENGTH);
+        // SyncEnclave::Logging("check cur in mem container id", "\n");
+        // Ocall_PrintfBinary(check_cur_container_id, CONTAINER_ID_LENGTH);
+
+        // fetch containers
+        // Ocall_SyncGetReqContainer((void*)req_container);
+        // Ocall_SyncGetReqContainerWithSize((void*)req_container);
+        sync_io_->SyncIO_SyncGetReqContainerWithSize((void*)req_container);
+
+        for (size_t k = 0; k < base_addr_list_.size(); k++) {
+            // get the delta chunk for decoding
+            DeltaBatchAddrValue_t tmp_delta_addr = pending_delta_list_.front();
+            pending_delta_list_.pop();
+
+            uint8_t* pending_delta_chunk = plain_in_buf_ + tmp_delta_addr.offset
+                + CHUNK_HASH_HMAC_SIZE;
+
+            // // debug: calculate the sim chunk hash
+            // uint8_t check_sim_hash[CHUNK_HASH_HMAC_SIZE];
+            // crypto_util_->GenerateHMAC( pending_delta_chunk, tmp_delta_addr.size,
+            //     check_sim_hash);
+            // SyncEnclave::Logging("check pair", "\n");
+            // uint8_t check_base_hash[CHUNK_HASH_HMAC_SIZE];
+            // memcpy(check_base_hash, plain_in_buf_ + tmp_delta_addr.offset, CHUNK_HASH_HMAC_SIZE);
+            // Ocall_PrintfBinary(check_base_hash, CHUNK_HASH_HMAC_SIZE);
+
+            // Ocall_PrintfBinary(check_sim_hash, CHUNK_HASH_HMAC_SIZE);
+
+            // checking
+            auto check_iter = tmp_base_set.find(k);
+            if (check_iter != tmp_base_set.end()) {
+                // the base should be skipped
+                // SyncEnclave::Logging("skip base entry k", "%d\n", k);
+                tmp_base_set.erase(k);
+                continue;
+            }
+
+            // get the base chunk
+            uint32_t base_id = base_addr_list_[k].containerID;
+            uint32_t base_offset = base_addr_list_[k].offset;
+            uint32_t base_size = base_addr_list_[k].length;
+            uint32_t meta_offset = 0;
+            uint8_t* base_chunk_data = nullptr;
+
+            if (req_container->sizeArray[base_id] == 0) {
+                // the container is currently in-memory
+                memcpy((char*)&meta_offset, container_buf, sizeof(uint32_t));
+
+                base_chunk_data = container_buf->body + base_offset;
+            }
+            else {
+                memcpy((char*)&meta_offset, container_array[base_id], sizeof(uint32_t));
+                // SyncEnclave::Logging("check read base ","metaoffset=%d, offset=%d, len=%d\n", meta_offset, base_offset, base_size);
+
+                base_chunk_data = container_array[base_id] + meta_offset 
+                    + base_offset + sizeof(uint32_t);
+            }
+            
+            // decrypt the base chunk
+            uint8_t plain_base[MAX_CHUNK_SIZE];
+            uint8_t* base_iv = base_chunk_data + base_size;
+            // crypto_util_->DecryptionWithKeyIV(cipher_ctx_, base_chunk_data, base_size,
+            //     SyncEnclave::enclave_key_, plain_base, base_iv);
+            memcpy(plain_base, base_chunk_data, base_size);    
+
+            // // debug: check the plain base data
+            // uint8_t check_plain_base_hash[CHUNK_HASH_HMAC_SIZE];
+            // crypto_util_->GenerateHMAC( plain_base, base_size, check_plain_base_hash);
+            // SyncEnclave::Logging("check plain base hash", "\n");
+            // Ocall_PrintfBinary(check_plain_base_hash, CHUNK_HASH_HMAC_SIZE);
+
+            // delta decode & write
+            uint8_t original_chunk[MAX_CHUNK_SIZE];
+            uint32_t original_size = 0;
+
+            if (tmp_delta_addr.type == DELTA_COMP_CHUNK) {
+                // decompress the delta first
+                uint8_t tmp_decomp_chunk[MAX_CHUNK_SIZE];
+                int tmp_decomp_size = LZ4_decompress_safe((char*)pending_delta_chunk, 
+                    (char*)tmp_decomp_chunk, tmp_delta_addr.size, MAX_CHUNK_SIZE);
+                
+                if (tmp_decomp_size <= 0) {
+                    tool::Logging("error ", "decompress error\n");
+                }
+
+                // // debug: check the decompress data
+                // uint8_t check_decomp_hash[CHUNK_HASH_HMAC_SIZE];
+                // crypto_util_->GenerateHMAC( tmp_decomp_chunk, tmp_decomp_size, check_decomp_hash);
+                // SyncEnclave::Logging("check decomp hash", "\n");
+                // Ocall_PrintfBinary(check_decomp_hash, CHUNK_HASH_HMAC_SIZE);
+
+                original_size = this->DeltaDecode(plain_base, base_size, 
+                    tmp_decomp_chunk, tmp_decomp_size, original_chunk);
+                
+                // debug
+                tmp_debug_entry->dedupFlag = DELTA_COMP_CHUNK;
+            }
+            else if (tmp_delta_addr.type == DELTA_ONLY_CHUNK) {
+                // // debug: check the decompress data
+                // uint8_t check_decomp_hash[CHUNK_HASH_HMAC_SIZE];
+                // crypto_util_->GenerateHMAC( pending_delta_chunk, tmp_delta_addr.size, check_decomp_hash);
+                // SyncEnclave::Logging("check pending hash", "\n");
+                // Ocall_PrintfBinary(check_decomp_hash, CHUNK_HASH_HMAC_SIZE);
+
+                original_size = this->DeltaDecode(plain_base, base_size, 
+                    pending_delta_chunk, tmp_delta_addr.size, original_chunk);
+                
+                // debug
+                tmp_debug_entry->dedupFlag = DELTA_ONLY_CHUNK;
+            }
+            
+            // SyncEnclave::Logging("DELTA_ONLY_CHUNK decode size ", "original = %d; decode = %d; type = %d\n", tmp_delta_addr.size, original_size, tmp_debug_entry->dedupFlag);
+
+            // debug
+            // SyncEnclave::Logging("tail decode size ", "%d\n", original_size);
+            // uint8_t check_hash[CHUNK_HASH_HMAC_SIZE];
+            // crypto_util_->GenerateHMAC( original_chunk, original_size,
+            //     check_hash);
+            // Ocall_PrintfBinary(check_hash, CHUNK_HASH_HMAC_SIZE);
+
+            this->ProcessOneChunk(container_buf, original_chunk, original_size, 
+                tmp_update_entry, tmp_debug_entry);
+            tmp_debug_entry ++;
+            debug_num ++;
+            // this->ProcessOneChunk(container_buf, original_chunk, original_size, 
+            //     tmp_update_entry);
+
+            // move on
+            tmp_update_entry ++;
+            update_num ++;
+        }
+
+        // reset
+        req_container->idNum = 0;
+        tmp_container_map.clear();
+        base_addr_list_.clear();
+    }
+
+    update_index->queryNum = update_num;
+
+    debug_check_quary->queryNum = debug_num;
+
+    // Ocall_CheckDebugIndex((void*)debug_check_quary);
+    sync_io_->SyncIO_CheckDebugIndex((void*)debug_check_quary);
+    
+    // debug
+    // SyncEnclave::Logging("fp index insert: update num = ", "%d (%d)\n", update_index->queryNum, update_num);
+    
+    // update the fp index here
+    // Ocall_UpdateOutFPIndex((void*)update_index);
+    sync_io_->SyncIO_UpdateOutFPIndex((void*)update_index);
+
+    if (pending_delta_list_.size() != 0) {
+        tool::Logging("error ", "pending delta list not empty.\n");
+    }
+
+    return ;
+}
+
+void SyncDataWriter::ProcessOneChunk(Container_t* container_buf, uint8_t* chunk_data, 
+    uint32_t chunk_size, OutChunkQueryEntry_t* chunk_addr,
+    OutChunkQueryEntry_t* debug_check_entry) {
+    uint8_t* cur_iv = this->PickNewIV();
+
+    // perform local compress
+    uint8_t tmp_compress_chunk[MAX_CHUNK_SIZE];
+    int tmp_compress_size = 0;
+
+    // enc with data key
+    uint8_t tmp_enc_chunk[MAX_CHUNK_SIZE];
+    uint32_t tmp_enc_size = 0;
+
+    // generate chunk hash first
+    uint8_t cur_hash[CHUNK_HASH_HMAC_SIZE];
+    crypto_util_->GenerateHMAC(chunk_data, chunk_size, cur_hash);
+    // // debug
+    // SyncEnclave::Logging("process one chunk ", "hash = \n");
+    // Ocall_PrintfBinary(cur_hash, CHUNK_HASH_HMAC_SIZE);
+
+    memcpy(debug_check_entry->chunkHash, cur_hash, CHUNK_HASH_HMAC_SIZE);
+
+    // debug
+    // memcpy(chunk_addr->chunkHash, cur_hash, CHUNK_HASH_HMAC_SIZE);
+    // crypto_util_->IndexAESCMCEnc(cipher_ctx_, cur_hash, CHUNK_HASH_HMAC_SIZE,
+    //     SyncEnclave::index_query_key_, chunk_addr->chunkHash);
+    memcpy(chunk_addr->chunkHash, cur_hash, CHUNK_HASH_HMAC_SIZE);    
+
+    // generate features
+    uint64_t cur_features[SUPER_FEATURE_PER_CHUNK];
+    this->ExtractFeature(rabin_ctx_, chunk_data, chunk_size, cur_features);
+
+    tmp_compress_size = LZ4_compress_fast((char*)chunk_data, (char*)tmp_compress_chunk, 
+        chunk_size, chunk_size, 3);
+    
+    if (tmp_compress_size > 0) {
+        // crypto_util_->EncryptWithKeyIV(cipher_ctx_, tmp_compress_chunk, tmp_compress_size,
+        //     SyncEnclave::enclave_key_, tmp_enc_chunk, cur_iv);
+        memcpy(tmp_enc_chunk, tmp_compress_chunk, tmp_compress_size);
+        tmp_enc_size = tmp_compress_size;
+    }
+    else {
+        // this chunk cannot be compressed
+        // crypto_util_->EncryptWithKeyIV(cipher_ctx_, chunk_data, chunk_size,
+        //     SyncEnclave::enclave_key_, tmp_enc_chunk, cur_iv);
+        memcpy(tmp_enc_chunk, chunk_data, chunk_size);    
+        tmp_enc_size = chunk_size;
+    }
+
+    // save chunk to container
+    this->SaveChunk(container_buf, tmp_enc_chunk, tmp_enc_size, cur_iv, cur_hash, 
+        cur_features, &chunk_addr->value);
+    
+    _comp_similar_size += tmp_enc_size;
+
+    return ;
+}
+
+
+/**
+ * @brief process one recovered chunk
+ * 
+ * @param chunk_data 
+ * @param chunk_size 
+ */
+void SyncDataWriter::ProcessOneChunk(Container_t* container_buf, uint8_t* chunk_data, 
+    uint32_t chunk_size, OutChunkQueryEntry_t* chunk_addr) {
+    uint8_t* cur_iv = this->PickNewIV();
+
+    // perform local compress
+    uint8_t tmp_compress_chunk[MAX_CHUNK_SIZE];
+    int tmp_compress_size = 0;
+
+    // enc with data key
+    uint8_t tmp_enc_chunk[MAX_CHUNK_SIZE];
+    uint32_t tmp_enc_size = 0;
+
+    // generate chunk hash first
+    uint8_t cur_hash[CHUNK_HASH_HMAC_SIZE];
+    crypto_util_->GenerateHMAC(chunk_data, chunk_size, cur_hash);
+    // // debug
+    // SyncEnclave::Logging("process one chunk ", "hash = \n");
+    // Ocall_PrintfBinary(cur_hash, CHUNK_HASH_HMAC_SIZE);
+
+    // debug
+    // memcpy(chunk_addr->chunkHash, cur_hash, CHUNK_HASH_HMAC_SIZE);
+    // crypto_util_->IndexAESCMCEnc(cipher_ctx_, cur_hash, CHUNK_HASH_HMAC_SIZE,
+    //     SyncEnclave::index_query_key_, chunk_addr->chunkHash);
+    memcpy(chunk_addr->chunkHash, cur_hash, CHUNK_HASH_HMAC_SIZE);    
+
+    // generate features
+    uint64_t cur_features[SUPER_FEATURE_PER_CHUNK];
+    this->ExtractFeature(rabin_ctx_, chunk_data, chunk_size, cur_features);
+
+    tmp_compress_size = LZ4_compress_fast((char*)chunk_data, (char*)tmp_compress_chunk, 
+        chunk_size, chunk_size, 3);
+    
+    if (tmp_compress_size > 0) {
+        // crypto_util_->EncryptWithKeyIV(cipher_ctx_, tmp_compress_chunk, tmp_compress_size,
+        //     SyncEnclave::enclave_key_, tmp_enc_chunk, cur_iv);
+        memcpy(tmp_enc_chunk, tmp_compress_chunk, tmp_compress_size);    
+        tmp_enc_size = tmp_compress_size;
+    }
+    else {
+        // this chunk cannot be compressed
+        // crypto_util_->EncryptWithKeyIV(cipher_ctx_, chunk_data, chunk_size,
+        //     SyncEnclave::enclave_key_, tmp_enc_chunk, cur_iv);
+        memcpy(tmp_enc_chunk, chunk_data, chunk_size);    
+        tmp_enc_size = chunk_size;
+    }
+
+    // save chunk to container
+    this->SaveChunk(container_buf, tmp_enc_chunk, tmp_enc_size, cur_iv, cur_hash, 
+        cur_features, &chunk_addr->value);
+    
+    _comp_similar_size += tmp_enc_size;
+
+    return ;
+}
+
+/**
+ * @brief delta decoding
+ * 
+ * @param base_chunk 
+ * @param base_size 
+ * @param delta_chunk 
+ * @param delta_size 
+ * @param output_chunk 
+ * @return uint32_t 
+ */
+uint32_t SyncDataWriter::DeltaDecode(uint8_t* base_chunk, uint32_t base_size,
+    uint8_t* delta_chunk, uint32_t delta_size, uint8_t* output_chunk) {
+    
+    // decompress the base chunk first
+    uint8_t original_base[MAX_CHUNK_SIZE];
+    int original_base_size = 0;
+
+    original_base_size = LZ4_decompress_safe((char*)base_chunk, (char*)original_base, 
+        base_size, MAX_CHUNK_SIZE);
+    if (original_base_size > 0) {
+
+    }
+    else {
+        memcpy(original_base, base_chunk, base_size);
+        original_base_size = base_size;
+        tool::Logging("cannot decomp ","decompsize = %d\n", original_base_size);
+    }
+    
+    uint64_t ret_size = 0;
+    // int ret = xd3_decode_memory(delta_chunk, delta_size, base_chunk, base_size,
+    //     output_chunk, &ret_size, ENC_MAX_CHUNK_SIZE, delta_flag_);
+    int ret = xd3_decode_memory(delta_chunk, delta_size, original_base, original_base_size,
+        output_chunk, &ret_size, MAX_CHUNK_SIZE, delta_flag_);    
+    if (ret != 0) {
+        tool::Logging(my_name_.c_str(), "delta decoding fails: %d.\n",
+            ret);
+        // exit(EXIT_FAILURE);
+    }
+
+    _uncomp_delta_size += delta_size;
+    _uncomp_similar_size += ret_size;
+
+    return ret_size;
+}
+
+/**
+ * @brief generate features for one chunk
+ * 
+ * @param rabin_ctx 
+ * @param data 
+ * @param size 
+ * @param features 
+ */
+void SyncDataWriter::ExtractFeature(RabinCtx_t &rabin_ctx, uint8_t* data, uint32_t size, 
+    uint64_t* features) {
+    // uint8_t plain_chunk[MAX_CHUNK_SIZE];
+    // uint8_t origin_chunk[MAX_CHUNK_SIZE];
+    // uint8_t* iv = data + size;
+    // uint64_t chunk_features[SUPER_FEATURE_PER_CHUNK];
+    // // decrypt chunk
+    // crypto_util_->DecryptionWithKeyIV(cipher_ctx_, data, size, SyncEnclave::enclave_key_,
+    //     plain_chunk, iv);
+    //  try decompression
+    // int decompress_size = LZ4_decompress_safe((char*)data, (char*)origin_chunk, size, 
+    //     MAX_CHUNK_SIZE);
+    // SyncEnclave::Logging(" ", "compsize = %d, decompsize = %d\n", size, decompress_size);
+    // if (decompress_size > 0) {
+    //     // can decompress
+    //     finesse_util_->ExtractFeature(rabin_ctx_, origin_chunk, decompress_size,
+    //         features);
+    // }
+    // else {
+    //     finesse_util_->ExtractFeature(rabin_ctx_, data, size,
+    //         features);
+    // }
+
+    // SyncEnclave::Logging("in chunk features", "\n");
+
+    finesse_util_->ExtractFeature(rabin_ctx_, data, size,
+            features);
+
+    // for(size_t i = 0; i < SUPER_FEATURE_PER_CHUNK; i++) {
+    //     SyncEnclave::Logging("chunk features", "%d\t", features[i]);
+    // }
+    // SyncEnclave::Logging("chunk features", "\n");
+
+    return ;
+}
+
+/**
+ * @brief save the recovered enc chunk
+ * 
+ * @param chunk_data 
+ * @param chunk_size 
+ * @param chunk_iv 
+ * @param chunk_hash 
+ * @param features 
+ */
+void SyncDataWriter::SaveChunk(Container_t* container_buf, uint8_t* chunk_data, 
+    uint32_t chunk_size, uint8_t* chunk_iv, uint8_t* chunk_hash, uint64_t* features, 
+    RecipeEntry_t* chunk_addr) {
+// #if (CONTAINER_META_SESSION == 1)
+
+    // prepare the recipe entry value
+    RecipeEntry_t tmp_entry;
+    tmp_entry.length = chunk_size;
+    // chunk_addr->length = chunk_size;
+
+    uint32_t save_offset = container_buf->currentSize;
+    uint32_t write_offset = save_offset;
+    uint32_t save_meta_offset = container_buf->currentMetaSize;
+    uint32_t write_meta_offset = save_meta_offset;
+
+    _total_write_size += chunk_size;
+
+    uint32_t feature_size = SUPER_FEATURE_PER_CHUNK * sizeof(uint64_t);
+    if ((CRYPTO_BLOCK_SIZE + chunk_size + save_offset + save_meta_offset + CHUNK_HASH_HMAC_SIZE + feature_size < MAX_CONTAINER_SIZE) && (save_meta_offset + CHUNK_HASH_HMAC_SIZE + feature_size < MAX_META_SIZE)) {
+        // current container buf can store this chunk
+
+        // write the metadata session (features || chunkhash)
+        memcpy(container_buf->metadata + write_meta_offset, (uint8_t*)features, 
+            SUPER_FEATURE_PER_CHUNK * sizeof(uint64_t));
+        write_meta_offset += feature_size;
+        memcpy(container_buf->metadata + write_meta_offset, chunk_hash,
+            CHUNK_HASH_HMAC_SIZE);
+
+        // write the chunk data and iv
+        memcpy(container_buf->body + write_offset, chunk_data, chunk_size);
+        write_offset += chunk_size;
+        memcpy(container_buf->body + write_offset, chunk_iv, CRYPTO_BLOCK_SIZE);
+        // write_offset += CRYPTO_BLOCK_SIZE;
+        memcpy(tmp_entry.containerName, container_buf->containerID, CONTAINER_ID_LENGTH);
+        // memcpy(chunk_addr->containerName, container_buf->containerID, CONTAINER_ID_LENGTH);
+    }
+    else {
+        // do ocall: write current container to disk
+        // Ocall_WriteSyncContainer(container_buf);
+        sync_io_->SyncIO_WriteSyncContainer(container_buf);
+        
+        // reset
+        container_buf->currentSize = 0;
+        container_buf->currentMetaSize = 0;
+
+        save_offset = 0;
+        write_offset = 0;
+        save_meta_offset = 0;
+        write_meta_offset = 0;
+
+        // write new chunk
+        // write the metadata session (features || chunkhash)
+        memcpy(container_buf->metadata + write_meta_offset, (uint8_t*)features, 
+            SUPER_FEATURE_PER_CHUNK * sizeof(uint64_t));
+        write_meta_offset += SUPER_FEATURE_PER_CHUNK * sizeof(uint64_t);
+        memcpy(container_buf->metadata + write_meta_offset, chunk_hash,
+            CHUNK_HASH_HMAC_SIZE);
+
+        // write the chunk data and iv
+        memcpy(container_buf->body + write_offset, chunk_data, chunk_size);
+        write_offset += chunk_size;
+        memcpy(container_buf->body + write_offset, chunk_iv, CRYPTO_BLOCK_SIZE);
+        // write_offset += CRYPTO_BLOCK_SIZE;
+        memcpy(tmp_entry.containerName, container_buf->containerID, CONTAINER_ID_LENGTH);
+        // memcpy(chunk_addr->containerName, container_buf->containerID, CONTAINER_ID_LENGTH);
+    }
+
+    container_buf->currentSize += chunk_size;
+    container_buf->currentSize += CRYPTO_BLOCK_SIZE;
+    container_buf->currentMetaSize += feature_size;
+    container_buf->currentMetaSize += CHUNK_HASH_HMAC_SIZE;
+
+    tmp_entry.offset = save_offset;
+
+    // SyncEnclave::Logging("write addr ", "value: %d, %d\n", tmp_entry.offset, tmp_entry.length);
+
+    // // debug: check the recover correctness
+    // SyncEnclave::Logging("check write hash", "\n");
+    // uint8_t check_write_hash[CHUNK_HASH_HMAC_SIZE];
+    // memcpy(check_write_hash, chunk_hash, CHUNK_HASH_HMAC_SIZE);
+    // Ocall_PrintfBinary(check_write_hash, CHUNK_HASH_HMAC_SIZE);
+
+    // prepare the index update
+    // crypto_util_->AESCBCEnc(cipher_ctx_, (uint8_t*)&tmp_entry, sizeof(RecipeEntry_t),
+    //     SyncEnclave::index_query_key_, (uint8_t*)chunk_addr);
+    memcpy((uint8_t*)chunk_addr, (uint8_t*)&tmp_entry, sizeof(RecipeEntry_t));    
+
+    // // ???????
+    // // update batch index
+    // BatchAddrValue_t tmp_value;
+    // string tmp_key;
+    // tmp_key.assign((char*)chunk_hash, CHUNK_HASH_HMAC_SIZE);
+    // tmp_value.offset = container_buf->currentSize;
+    // tmp_value.size = chunk_size;
+
+    // batch_fp_index_.insert(make_pair(tmp_key, tmp_value));
+// #endif
+
+    return ;
+}

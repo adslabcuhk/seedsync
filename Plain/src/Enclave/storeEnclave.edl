@@ -1,0 +1,119 @@
+enclave {
+    include "sgx_tseal.h"
+    include "sgx_trts.h"
+    include "constVar.h"
+    include "chunkStructure.h"
+    include "stdbool.h"
+    include "sgx_key_exchange.h"
+
+    from "sgx_tstdc.edl" import *;
+    from "sgx_tsgxssl.edl" import *;
+    from "sgx_tkey_exchange.edl" import *;
+    from "sgx_pthread.edl" import *;
+
+    /* 
+     * uprint - invokes OCALL to display string buffer inside the enclave.
+     *  [in]: copy the string buffer to App outside.
+     *  [string]: specifies 'str' is a NULL terminated buffer.
+     */
+    untrusted {
+        /* OCall print the message */
+        void Ocall_SGX_Exit_Error([in, string] const char *error_msg); 
+        void Ocall_Printf([in, string] const char* str); 
+        void Ocall_PrintfBinary([in, size=len] const uint8_t* buffer, size_t len);
+
+        /* get uuid */
+        void Ocall_CreateUUID([out, size=len] uint8_t* id, size_t len);
+
+        /* write sealed data to the disk */
+        void Ocall_InitWriteSealedFile([in, out] bool* ret, [in, string] const char* sealedFileName);
+        void Ocall_CloseWriteSealedFile([in, string] const char* sealedFileName);
+        void Ocall_WriteSealedData([in, string] const char* sealedFileName,
+                            [in, size=sealedDataSize] uint8_t* sealedDataBuffer,
+                            size_t sealedDataSize);
+
+        /* read sealed data from the disk */
+        void Ocall_InitReadSealedFile([in, out] uint64_t* fileSize, [in, string] const char* sealedFileName);
+        void Ocall_CloseReadSealedFile([in, string] const char* sealedFileName);
+        void Ocall_ReadSealedData([in, string] const char* sealedFileName, 
+                            [out, size=sealedDataSize] uint8_t* dataBuffer, 
+                            uint32_t sealedDataSize); 
+
+        /* for performance measurement */
+        void Ocall_GetCurrentTime([in, out] uint64_t* retTime);
+
+        /* sync ocalls */
+        void Ocall_QueryChunkIndex([user_check] void* out_chunk_query);
+        void Ocall_SingleQueryChunkIndex([user_check] void* query_entry);
+        void Ocall_QueryFeatureIndex([user_check] void* out_feature_query);
+        void Ocall_SyncGetReqContainer([user_check] void* req_container);
+        void Ocall_SyncGetReqContainerWithSize([user_check] void* req_container);
+        void Ocall_SingleGetReqContainer([user_check] void* req_container);
+        void Ocall_ReadChunkBatch([user_check] uint8_t* chunk_data, uint32_t chunk_num);
+        void Ocall_WriteChunkBatch([user_check] uint8_t* chunk_data, uint32_t chunk_num);
+        void Ocall_QueryChunkAddr([user_check] void* out_chunk_query);
+        void Ocall_WriteSyncContainer([user_check] Container_t* newContainer);
+        void Ocall_UpdateOutFPIndex([user_check] void* update_index);
+
+        // for debugging
+        void Ocall_InsertDebugIndex([user_check] void* debug_index);
+        void Ocall_CheckDebugIndex([user_check] void* debug_index);
+    };
+
+
+    trusted {
+        /* sync ecalls */
+        public void Ecall_Sync_Enclave_Init([user_check] SyncEnclaveConfig_t* enclave_config);
+        public void Ecall_Sync_Enclave_Destroy();
+        
+        public void Ecall_Stream_Phase1_ProcessBatch([user_check] uint8_t* filename_buf, uint32_t currentBatchID,
+            [user_check] uint8_t* recipe_buf, size_t recipe_num, [user_check] uint8_t* chunk_hash_buf);
+
+        public void Ecall_Stream_Phase2_ProcessBatch_NaiveStreamCache([user_check] uint8_t* fp_list, size_t fp_num,
+            [user_check] uint8_t* uni_fp_list, [user_check] size_t* uni_fp_num, 
+            [user_check] Container_t* req_container);
+
+        public void Ecall_Stream_Phase2_ProcessBatch_BatchStreamCache([user_check] uint8_t* fp_list, size_t fp_num,
+            [user_check] uint8_t* uni_fp_list, [user_check] size_t* uni_fp_num, 
+            [user_check] OutChunkQuery_t* addr_query, [user_check] ReqContainer_t* req_container);
+
+        public void Ecall_Stream_Phase3_ProcessBatch([user_check] uint8_t* unifp_list, size_t unifp_num,
+            [user_check] ReqContainer_t* req_container, [user_check] OutChunkQuery_t* addr_query, 
+            [user_check] uint8_t* feature_list, size_t feature_num);
+        
+        public void Ecall_Stream_Phase4_ProcessBatch([user_check] uint8_t* feature_fp_list, size_t feature_num, 
+            [user_check] uint8_t* out_list, size_t out_num);
+        
+        public void Ecall_Stream_Phase5_ProcessBatch([user_check] uint8_t* in_buf, uint32_t in_size, 
+            [user_check] ReqContainer_t* req_container, [user_check] OutChunkQuery_t* addr_query, 
+            [user_check] uint8_t* out_buf, [user_check] uint32_t* out_size);
+
+        public void Ecall_Stream_Phase6_ProcessBatch([user_check] uint8_t* recv_buf, uint32_t recv_size, 
+            [user_check] ReqContainer_t* req_container, [user_check] OutChunkQuery_t* base_addr_query,
+            [user_check] Container_t* container_buf, [user_check] OutChunkQuery_t* update_index);
+        /*
+        public void Ecall_Test_Execute([user_check] uint8_t* recv_buf, uint32_t recv_size, 
+            [user_check] ReqContainer_t* req_container, [user_check] OutChunkQuery_t* base_addr_query,
+            [user_check] Container_t* container_buf, [user_check] OutChunkQuery_t* update_index);
+        
+        public void Ecall_Test_Execute_2(); 
+        */
+
+        public void Ecall_GetSyncEnclaveInfo([user_check] SyncEnclaveInfo_t* sync_info, uint8_t type);
+
+        public void Ecall_Init_Sync();
+        public void Ecall_Destroy_Sync();
+
+
+        // for debugging
+        public void Ecall_Stream_Phase2_ProcessBatch_NaiveStreamCache_Debug([user_check] uint8_t* fp_list, size_t fp_num,
+            [user_check] uint8_t* uni_fp_list, [user_check] size_t* uni_fp_num, 
+            [user_check] Container_t* req_container, [user_check] OutChunkQuery_t* debug_out_query);
+        
+        public void Ecall_Stream_Phase6_ProcessBatch_Debug([user_check] uint8_t* recv_buf, uint32_t recv_size, 
+            [user_check] ReqContainer_t* req_container, [user_check] OutChunkQuery_t* base_addr_query,
+            [user_check] Container_t* container_buf, [user_check] OutChunkQuery_t* update_index,
+            [user_check] OutChunkQuery_t* debug_check_quary);
+
+    };
+};
